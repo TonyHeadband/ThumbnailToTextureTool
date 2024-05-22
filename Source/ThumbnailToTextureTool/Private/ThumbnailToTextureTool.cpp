@@ -3,7 +3,6 @@
 #include "CustomBlueprintRenderer.h"
 #include "CanvasTypes.h"
 #include "IThumbnailToTextureTool.h"
-
 #include "ContentBrowserModule.h"
 #include "FileHelpers.h"
 #include "ISettingsModule.h"
@@ -57,11 +56,24 @@ private:
 	FDelegateHandle ContentBrowserExtenderDelegateHandle;
 
 	void CreateThumbnailSettings();
+	static FString GetTextureExportPath(const FAssetData& AssetData);
 
 private:
 	UThumbnailToTextureSettings* ThumbnailToTextureEditorSettings;
 };
 
+
+FString FThumbnailToTextureToolModule::GetTextureExportPath(const FAssetData& AssetData)
+{
+	if (GetEditorSettings().bExportPathFromAsset)
+	{
+		FString NewPath = AssetData.PackagePath.ToString();
+		NewPath.ReplaceInline(*GetEditorSettings().PathSearchFor, *GetEditorSettings().PathReplaceWith);
+		return NewPath;
+	}
+	
+	return GetEditorSettings().RootTexture2DSaveDir.Path;
+}
 
 FThumbnailToTextureToolModule::FThumbnailToTextureToolModule(): BlueprintThumbnailRenderer(nullptr),
                                                                 StaticMeshThumbnailRenderer(nullptr),
@@ -234,7 +246,23 @@ void FThumbnailToTextureToolModule::ExecuteSaveThumbnailAsTexture(FMenuBuilder& 
 							AssetName.LeftInline(extensionIdx);
 						}
 						GamePath.LeftInline(PathEnd);
+						// Remove what's before the first underscore if bool true
+						if (GetEditorSettings().bReplacePrefix)
+						{
+							// adding +1 to remove the underscore too
+							int32 PrefixIndex = AssetName.Find("_")+1;
+							AssetName.RightChopInline(PrefixIndex);
+						}
 						FString Prefix = GetEditorSettings().ThumbnailPrefix;
+						// check if prefix = "" and bReplacePrefix = true
+						// the engine will crash so we enforce an extra character in the name
+						if (GetEditorSettings().bExportPathFromAsset &&
+							!GetEditorSettings().bReplacePrefix &&
+							GetEditorSettings().ThumbnailPrefix.IsEmpty())
+						{
+							UE_LOG(LogEngine, Warning, TEXT("Cannot create texture from asset, name already present in folder but different type."))
+							return;
+						}
 						FString NameWithPrefix = Prefix + AssetName;
 						AssetName = NameWithPrefix;
 					}
@@ -255,7 +283,7 @@ void FThumbnailToTextureToolModule::ExecuteSaveThumbnailAsTexture(FMenuBuilder& 
 					TSet<FName> ObjectFullNames;
 					ObjectFullNames.Add(ObjectFullName);
 
-					FString PackageName = GetEditorSettings().RootTexture2DSaveDir.Path;
+					FString PackageName = GetTextureExportPath(AssetData);
 					if (!PackageName.EndsWith("/"))
 					{
 						PackageName += "/";
@@ -531,7 +559,7 @@ void FThumbnailToTextureToolModule::ExecuteSaveThumbnailAsTexture(FMenuBuilder& 
 							                        1,
 							                        TSF_BGRA8, ObjectThumbnail->GetUncompressedImageData().GetData());
 							NewTexture->LODGroup = TEXTUREGROUP_UI; // Prepare the asset for UI use
-							NewTexture->CompressionSettings = TC_Default;
+							NewTexture->CompressionSettings = TC_EditorIcon;
 							// No need for "UserInterface2D", no need for alpha, it was also having issues making the asset have a thumbnail itself
 							NewTexture->NeverStream = true;
 							NewTexture->CompressionNoAlpha = true;
